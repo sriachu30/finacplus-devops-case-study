@@ -6,7 +6,53 @@ Demonstrate an end-to-end DevOps workflow for FinacPlus using Git, Jenkins, Dock
 
 ## Current Status
 
-Repository foundation initialized. Application, containerization, CI/CD pipeline, and deployment configurations are not yet implemented.
+Phase 1 complete: sample FinacPlus API implemented with tests. Containerization, CI/CD pipeline, and deployment configurations are not yet implemented.
+
+## Application
+
+The **FinacPlus API** is a small mock financial REST service. It provides static account data for the future CI/CD pipeline to build, test, containerize, and deploy.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Returns service health status |
+| GET | `/api/accounts` | Returns a list of mock financial accounts |
+| GET | `/api/accounts/{account_id}` | Returns a single account by ID, or HTTP 404 if not found |
+
+### Install dependencies
+
+Create and activate a local virtual environment, then install dependencies:
+
+```bash
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+source .venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+### Run the API locally
+
+```bash
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Example health check:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+### Run the tests
+
+```bash
+pytest
+```
 
 ## Planned High-Level Architecture
 
