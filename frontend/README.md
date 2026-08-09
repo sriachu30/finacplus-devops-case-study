@@ -1,5 +1,9 @@
 # FUSE — FinacPlus Unified Software Engine
 
+
+Live Demo: https://fuse-finac-plus-unified-software-en-ten.vercel.app/
+
+
 Frontend-only deliverable for the FinacPlus DevOps case study. This is a
 single-page, scroll-driven technical experience that walks through the
 CI/CD pipeline (GitHub → Jenkins → pytest → Docker → Kind/Kubernetes →
