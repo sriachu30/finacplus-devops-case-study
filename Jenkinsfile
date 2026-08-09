@@ -4,9 +4,9 @@ pipeline {
     triggers {
         pollSCM('H/2 * * * *')
     }
-    
+
     environment {
-        IMAGE_NAME = 'finacplus-api:local'
+        IMAGE_REPOSITORY = 'finacplus-api'
         KIND_CLUSTER = 'finacplus'
         K8S_CONTEXT = 'kind-finacplus'
         HEALTH_PORT = '18000'
@@ -18,7 +18,18 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
+
                 checkout scm
+
+                script {
+                    // Use the Git commit as the Docker image version.
+                    // This gives every build an immutable, traceable image tag.
+                    env.IMAGE_TAG = env.GIT_COMMIT.take(7)
+                    env.IMAGE_NAME = "${env.IMAGE_REPOSITORY}:${env.IMAGE_TAG}"
+
+                    echo "Git commit: ${env.GIT_COMMIT}"
+                    echo "Docker image: ${env.IMAGE_NAME}"
+                }
             }
         }
 
@@ -34,14 +45,16 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                echo 'Building FinacPlus Docker image...'
+                echo "Building Docker image ${env.IMAGE_NAME}..."
+
                 bat 'docker build -t %IMAGE_NAME% .'
             }
         }
 
         stage('Verify Docker Image') {
             steps {
-                echo 'Verifying Docker image...'
+                echo "Verifying Docker image ${env.IMAGE_NAME}..."
+
                 bat 'docker image inspect %IMAGE_NAME%'
             }
         }
@@ -84,7 +97,8 @@ pipeline {
 
         stage('Load Image into Kind') {
             steps {
-                echo 'Loading Docker image into Kind...'
+                echo "Loading ${env.IMAGE_NAME} into Kind..."
+
                 bat 'kind load docker-image %IMAGE_NAME% --name %KIND_CLUSTER%'
             }
         }
@@ -92,9 +106,19 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 echo 'Applying Kubernetes manifests...'
+
                 bat 'kubectl apply -f k8s/'
 
+                echo "Updating deployment to image ${env.IMAGE_NAME}..."
+
+                bat '''
+                    kubectl set image deployment/finacplus-api ^
+                        finacplus-api=%IMAGE_NAME% ^
+                        --record
+                '''
+
                 echo 'Waiting for deployment rollout...'
+
                 bat 'kubectl rollout status deployment/finacplus-api --timeout=120s'
             }
         }
@@ -119,6 +143,12 @@ pipeline {
                     )
 
                     echo Two replicas are available.
+                '''
+
+                echo 'Verifying deployed image...'
+
+                bat '''
+                    kubectl get deployment finacplus-api -o jsonpath="{.spec.template.spec.containers[0].image}"
                 '''
             }
         }
@@ -149,6 +179,7 @@ pipeline {
         success {
             echo '========================================'
             echo 'FinacPlus CI/CD Pipeline PASSED'
+            echo "Deployed image: ${env.IMAGE_NAME}"
             echo '========================================'
         }
 
