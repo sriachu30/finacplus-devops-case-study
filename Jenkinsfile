@@ -113,17 +113,7 @@ pipeline {
 
             kubectl config current-context
 
-            kubectl config current-context | findstr /X /C:"%K8S_CONTEXT%" >nul
-
-            if errorlevel 1 (
-                echo ERROR: Kubernetes context does not match target cluster.
-                echo Expected: %K8S_CONTEXT%
-                echo Actual:
-                kubectl config current-context
-                exit /b 1
-            )
-
-            echo Kubernetes context verified: %K8S_CONTEXT%
+            powershell -NoProfile -Command "$actual = (kubectl config current-context).Trim(); $expected = '%K8S_CONTEXT%'.Trim(); if ($actual -ne $expected) { Write-Host 'ERROR: Kubernetes context does not match target cluster.'; Write-Host ('Expected: ' + $expected); Write-Host ('Actual: ' + $actual); exit 1 } else { Write-Host ('Kubernetes context verified: ' + $actual) }"
 
             echo ===== KUBERNETES NODES =====
             kubectl get nodes
