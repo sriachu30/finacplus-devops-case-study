@@ -80,26 +80,28 @@ pipeline {
         }
 
         stage('Prepare Kind Cluster') {
-            steps {
-                echo "Checking Kind cluster: ${env.KIND_CLUSTER}..."
+    steps {
+        echo "Checking Kind cluster: ${env.KIND_CLUSTER}..."
 
-                bat '''
-                    kind get clusters
+        bat '''
+            kind get clusters
 
-                    docker ps --filter "name=%KIND_CLUSTER%-control-plane"
+            kind get clusters > kind-clusters.txt
 
-                    kind get clusters | findstr /X /C:"%KIND_CLUSTER%" >nul
+            findstr /X /C:"%KIND_CLUSTER%" kind-clusters.txt >nul
 
-                    if errorlevel 1 (
-                        echo Kind cluster "%KIND_CLUSTER%" not found.
-                        echo Creating cluster...
-                        kind create cluster --name %KIND_CLUSTER% --wait 5m
-                    ) else (
-                        echo Kind cluster "%KIND_CLUSTER%" already exists.
-                    )
-                '''
-            }
-        }
+            if errorlevel 1 (
+                echo Kind cluster "%KIND_CLUSTER%" not found.
+                echo Creating cluster...
+                kind create cluster --name %KIND_CLUSTER% --wait 5m
+            ) else (
+                echo Kind cluster "%KIND_CLUSTER%" already exists.
+            )
+
+            del kind-clusters.txt
+        '''
+    }
+}
 
         stage('Configure Kubernetes Access') {
             steps {
@@ -146,26 +148,55 @@ pipeline {
             }
         }
 
- stage('Prepare Kind Cluster') {
+        stage('Prepare Kubernetes Manifests') {
     steps {
-        echo "Checking Kind cluster: ${env.KIND_CLUSTER}..."
+        echo "Generating Kubernetes manifests for application: ${env.APP_NAME}..."
 
-        bat '''
-            kind get clusters
+        powershell '''
+            $ErrorActionPreference = "Stop"
 
-            kind get clusters > kind-clusters.txt
+            $appName = $env:APP_NAME
+            $imageName = $env:IMAGE_NAME
 
-            findstr /X /C:"%KIND_CLUSTER%" kind-clusters.txt >nul
+            if ($appName -notmatch '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') {
+                throw "Invalid APP_NAME '$appName'. Kubernetes names must use lowercase letters, numbers, and hyphens."
+            }
 
-            if errorlevel 1 (
-                echo Kind cluster "%KIND_CLUSTER%" not found.
-                echo Creating cluster...
-                kind create cluster --name %KIND_CLUSTER% --wait 5m
-            ) else (
-                echo Kind cluster "%KIND_CLUSTER%" already exists.
-            )
+            Write-Host "Application name: $appName"
+            Write-Host "Image name: $imageName"
 
-            del kind-clusters.txt
+            if (Test-Path "generated-k8s") {
+                Remove-Item "generated-k8s" -Recurse -Force
+            }
+
+            New-Item -ItemType Directory -Force -Path "generated-k8s" | Out-Null
+
+            $deployment = Get-Content "k8s/deployment.template.yaml" -Raw
+            $service = Get-Content "k8s/service.template.yaml" -Raw
+
+            $deployment = $deployment.Replace('${APP_NAME}', $appName)
+            $deployment = $deployment.Replace('${IMAGE_NAME}', $imageName)
+
+            $service = $service.Replace('${APP_NAME}', $appName)
+
+            Set-Content `
+                -Path "generated-k8s/deployment.yaml" `
+                -Value $deployment `
+                -Encoding UTF8
+
+            Set-Content `
+                -Path "generated-k8s/service.yaml" `
+                -Value $service `
+                -Encoding UTF8
+
+            Write-Host "===== GENERATED MANIFESTS ====="
+            Get-ChildItem "generated-k8s"
+
+            Write-Host "===== GENERATED DEPLOYMENT ====="
+            Get-Content "generated-k8s/deployment.yaml"
+
+            Write-Host "===== GENERATED SERVICE ====="
+            Get-Content "generated-k8s/service.yaml"
         '''
     }
 }
