@@ -125,16 +125,7 @@ pipeline {
                 echo 'Starting temporary port-forward...'
 
                 bat '''
-                    powershell -NoProfile -Command ^
-                    "$p = Start-Process kubectl -ArgumentList 'port-forward','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; ^
-                    Start-Sleep -Seconds 5; ^
-                    try { ^
-                        $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/health' -TimeoutSec 10; ^
-                        Write-Host ('Health response: ' + ($response | ConvertTo-Json -Compress)); ^
-                        if ($response.status -ne 'healthy') { exit 1 } ^
-                    } finally { ^
-                        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue ^
-                    }"
+                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/health' -TimeoutSec 10; Write-Host ('Health response: ' + ($response | ConvertTo-Json -Compress)); if ($response.status -ne 'healthy') { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
                 '''
             }
         }
@@ -144,20 +135,12 @@ pipeline {
                 echo 'Validating accounts API...'
 
                 bat '''
-                    powershell -NoProfile -Command ^
-                    "$p = Start-Process kubectl -ArgumentList 'port-forward','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; ^
-                    Start-Sleep -Seconds 5; ^
-                    try { ^
-                        $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/api/accounts' -TimeoutSec 10; ^
-                        Write-Host ('Accounts response: ' + ($response | ConvertTo-Json -Compress)); ^
-                        if ($response.Count -ne 3) { exit 1 } ^
-                    } finally { ^
-                        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue ^
-                    }"
+                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/api/accounts' -TimeoutSec 10; Write-Host ('Accounts response: ' + ($response | ConvertTo-Json -Compress)); if ($response.Count -ne 3) { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
                 '''
             }
         }
     }
+}
 
     post {
 
