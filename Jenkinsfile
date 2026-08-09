@@ -101,23 +101,35 @@ pipeline {
         }
 
         stage('Configure Kubernetes Access') {
-            steps {
-                echo "Configuring Kubernetes access for cluster: ${env.KIND_CLUSTER}..."
+    steps {
+        echo "Configuring Kubernetes access for cluster: ${env.KIND_CLUSTER}..."
 
-                bat '''
-                    kind export kubeconfig ^
-                        --name %KIND_CLUSTER% ^
-                        --kubeconfig "%KUBECONFIG%"
+        bat '''
+            kind export kubeconfig ^
+                --name %KIND_CLUSTER% ^
+                --kubeconfig "%KUBECONFIG%"
 
-                    echo ===== KUBERNETES CONTEXT =====
-                    kubectl config current-context
+            echo ===== KUBERNETES CONTEXT =====
 
-                    echo ===== KUBERNETES NODES =====
-                    kubectl get nodes
-                '''
-            }
-        }
+            kubectl config current-context
 
+            kubectl config current-context | findstr /X /C:"%K8S_CONTEXT%" >nul
+
+            if errorlevel 1 (
+                echo ERROR: Kubernetes context does not match target cluster.
+                echo Expected: %K8S_CONTEXT%
+                echo Actual:
+                kubectl config current-context
+                exit /b 1
+            )
+
+            echo Kubernetes context verified: %K8S_CONTEXT%
+
+            echo ===== KUBERNETES NODES =====
+            kubectl get nodes
+        '''
+    }
+}
         stage('Prepare Kubernetes Namespace') {
             steps {
                 echo "Preparing Kubernetes namespace: ${env.K8S_NAMESPACE}..."
