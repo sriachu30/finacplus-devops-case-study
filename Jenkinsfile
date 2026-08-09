@@ -84,7 +84,7 @@ pipeline {
                     echo ===== KIND CONTROL PLANE =====
                     docker ps --filter "name=%KIND_CLUSTER%-control-plane"
 
-                    kind get clusters | findstr /X /C:"%KIND_CLUSTER%" >nul
+                    kind get clusters | findstr /C:"%KIND_CLUSTER%" >nul
 
                     if errorlevel 1 (
                         echo Kind cluster "%KIND_CLUSTER%" not found.
