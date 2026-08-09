@@ -15,7 +15,7 @@
  * VITE_API_BASE_URL resolves to a live service.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
 const MOCK_ACCOUNTS = [
   {
@@ -46,21 +46,34 @@ const MOCK_HEALTH = { status: 'healthy' }
 async function request(path, { timeoutMs = 2500 } = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+
   try {
-    const res = await fetch(`${API_BASE_URL}${path}`, { signal: controller.signal })
-    if (!res.ok) throw new Error(`Request failed: ${res.status}`)
-    return { data: await res.json(), source: 'live' }
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+          signal: controller.signal,
+      })
+
+      if (!res.ok) {
+          throw new Error(`Request failed: ${res.status}`)
+      }
+
+      return {
+          data: await res.json(),
+          source: 'live',
+      }
   } finally {
-    clearTimeout(timer)
+      clearTimeout(timer)
   }
 }
 
 /** GET /health */
 export async function getHealth() {
   try {
-    return await request('/health')
+      return await request('/health')
   } catch {
-    return { data: MOCK_HEALTH, source: 'mock' }
+      return {
+          data: MOCK_HEALTH,
+          source: 'mock',
+      }
   }
 }
 
