@@ -331,3 +331,4 @@ The following components are outside the current implemented scope:
 GCP/GKE and Terraform may be considered as later extensions because they are relevant to the target DevOps role.
 
 The next implementation phase will focus on Jenkins automation for continuous integration and delivery.
+<!-- CI trigger test -->
