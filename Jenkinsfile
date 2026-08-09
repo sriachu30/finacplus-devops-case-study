@@ -107,7 +107,6 @@ pipeline {
 
                 bat '''
                     kubectl get deployment finacplus-api -o jsonpath="{.status.availableReplicas}" > replicas.txt
-
                     set /p AVAILABLE_REPLICAS=<replicas.txt
 
                     if not "%AVAILABLE_REPLICAS%"=="2" (
@@ -140,7 +139,6 @@ pipeline {
             }
         }
     }
-}
 
     post {
 
