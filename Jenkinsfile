@@ -44,22 +44,18 @@ pipeline {
         stage('Prepare Kind Cluster') {
             steps {
                 echo 'Checking Kind cluster...'
-
                 bat '''
-                    kind get clusters | findstr /X "%KIND_CLUSTER%" >nul
-                    if errorlevel 1 (
-                        echo Kind cluster not found. Creating cluster...
-                        kind create cluster --name %KIND_CLUSTER% --wait 5m
-                    ) else (
-                        echo Kind cluster already exists.
-                    )
-                '''
+                kind get clusters
+                docker ps --filter "name=finacplus-control-plane"
 
-                echo 'Using Kind Kubernetes context...'
-                bat 'kubectl config use-context %K8S_CONTEXT%'
-
-                echo 'Checking Kubernetes node...'
-                bat 'kubectl get nodes'
+                kind get clusters | findstr "finacplus" >nul
+                if errorlevel 1 (
+                   echo Kind cluster not found. Creating cluster...
+                   kind create cluster --name finacplus --wait 5m
+                ) else (
+                   echo Kind cluster already exists.
+                )
+             '''
             }
         }
 
