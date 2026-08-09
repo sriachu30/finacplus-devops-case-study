@@ -5,10 +5,35 @@ pipeline {
         pollSCM('H/2 * * * *')
     }
 
+    parameters {
+        string(
+            name: 'IMAGE_REPOSITORY',
+            defaultValue: 'finacplus-api',
+            description: 'Docker image repository name'
+        )
+
+        string(
+            name: 'KIND_CLUSTER',
+            defaultValue: 'finacplus',
+            description: 'Target Kubernetes/Kind cluster'
+        )
+
+        string(
+            name: 'K8S_NAMESPACE',
+            defaultValue: 'finacplus',
+            description: 'Target Kubernetes namespace'
+        )
+    }
+
     environment {
-        IMAGE_REPOSITORY = 'finacplus-api'
-        KIND_CLUSTER = 'finacplus'
-        K8S_CONTEXT = 'kind-finacplus'
+        IMAGE_REPOSITORY = "${params.IMAGE_REPOSITORY}"
+        KIND_CLUSTER = "${params.KIND_CLUSTER}"
+        K8S_NAMESPACE = "${params.K8S_NAMESPACE}"
+
+        K8S_CONTEXT = "kind-${params.KIND_CLUSTER}"
+
+        IMAGE_NAME = "${params.IMAGE_REPOSITORY}:local"
+
         HEALTH_PORT = '18000'
         KUBECONFIG = "${WORKSPACE}\\.kubeconfig"
     }
@@ -18,18 +43,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
-
                 checkout scm
-
-                script {
-                    // Use the Git commit as the Docker image version.
-                    // This gives every build an immutable, traceable image tag.
-                    env.IMAGE_TAG = env.GIT_COMMIT.take(7)
-                    env.IMAGE_NAME = "${env.IMAGE_REPOSITORY}:${env.IMAGE_TAG}"
-
-                    echo "Git commit: ${env.GIT_COMMIT}"
-                    echo "Docker image: ${env.IMAGE_NAME}"
-                }
             }
         }
 
@@ -45,7 +59,7 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                echo "Building Docker image ${env.IMAGE_NAME}..."
+                echo "Building Docker image: ${env.IMAGE_NAME}"
 
                 bat 'docker build -t %IMAGE_NAME% .'
             }
@@ -53,7 +67,7 @@ pipeline {
 
         stage('Verify Docker Image') {
             steps {
-                echo "Verifying Docker image ${env.IMAGE_NAME}..."
+                echo 'Verifying Docker image...'
 
                 bat 'docker image inspect %IMAGE_NAME%'
             }
@@ -61,19 +75,26 @@ pipeline {
 
         stage('Prepare Kind Cluster') {
             steps {
-                echo 'Checking Kind cluster...'
+                echo "Checking Kind cluster: ${env.KIND_CLUSTER}..."
 
                 bat '''
+                    echo ===== KIND CLUSTERS =====
                     kind get clusters
-                    docker ps --filter "name=finacplus-control-plane"
 
-                    kind get clusters | findstr "finacplus" >nul
+                    echo ===== KIND CONTROL PLANE =====
+                    docker ps --filter "name=%KIND_CLUSTER%-control-plane"
+
+                    kind get clusters | findstr /X /C:"%KIND_CLUSTER%" >nul
 
                     if errorlevel 1 (
-                        echo Kind cluster not found. Creating cluster...
-                        kind create cluster --name %KIND_CLUSTER% --wait 5m
+                        echo Kind cluster "%KIND_CLUSTER%" not found.
+                        echo Creating cluster...
+
+                        kind create cluster ^
+                            --name %KIND_CLUSTER% ^
+                            --wait 5m
                     ) else (
-                        echo Kind cluster already exists.
+                        echo Kind cluster "%KIND_CLUSTER%" already exists.
                     )
                 '''
             }
@@ -81,10 +102,12 @@ pipeline {
 
         stage('Configure Kubernetes Access') {
             steps {
-                echo 'Configuring Kubernetes access for Jenkins...'
+                echo "Configuring Kubernetes access for cluster: ${env.KIND_CLUSTER}..."
 
                 bat '''
-                    kind export kubeconfig --name %KIND_CLUSTER% --kubeconfig "%KUBECONFIG%"
+                    kind export kubeconfig ^
+                        --name %KIND_CLUSTER% ^
+                        --kubeconfig "%KUBECONFIG%"
 
                     echo ===== KUBERNETES CONTEXT =====
                     kubectl config current-context
@@ -95,31 +118,56 @@ pipeline {
             }
         }
 
+        stage('Prepare Kubernetes Namespace') {
+            steps {
+                echo "Preparing Kubernetes namespace: ${env.K8S_NAMESPACE}..."
+
+                bat '''
+                    kubectl create namespace %K8S_NAMESPACE% ^
+                        --dry-run=client ^
+                        -o yaml | kubectl apply -f -
+                '''
+            }
+        }
+
         stage('Load Image into Kind') {
             steps {
-                echo "Loading ${env.IMAGE_NAME} into Kind..."
+                echo "Loading Docker image into Kind cluster: ${env.KIND_CLUSTER}..."
 
-                bat 'kind load docker-image %IMAGE_NAME% --name %KIND_CLUSTER%'
+                bat '''
+                    kind load docker-image %IMAGE_NAME% ^
+                        --name %KIND_CLUSTER%
+                '''
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
+                echo "Deploying to cluster ${env.KIND_CLUSTER}, namespace ${env.K8S_NAMESPACE}..."
+
                 echo 'Applying Kubernetes manifests...'
 
-                bat 'kubectl apply -f k8s/'
+                bat '''
+                    kubectl apply ^
+                        -f k8s/ ^
+                        -n %K8S_NAMESPACE%
+                '''
 
-                echo "Updating deployment to image ${env.IMAGE_NAME}..."
+                echo "Updating deployment image to ${env.IMAGE_NAME}..."
 
                 bat '''
                     kubectl set image deployment/finacplus-api ^
                         finacplus-api=%IMAGE_NAME% ^
-                        --record
+                        -n %K8S_NAMESPACE%
                 '''
 
                 echo 'Waiting for deployment rollout...'
 
-                bat 'kubectl rollout status deployment/finacplus-api --timeout=120s'
+                bat '''
+                    kubectl rollout status deployment/finacplus-api ^
+                        -n %K8S_NAMESPACE% ^
+                        --timeout=120s
+                '''
             }
         }
 
@@ -127,14 +175,24 @@ pipeline {
             steps {
                 echo 'Checking Kubernetes resources...'
 
-                bat 'kubectl get pods'
-                bat 'kubectl get deployment'
-                bat 'kubectl get service'
+                bat '''
+                    echo ===== PODS =====
+                    kubectl get pods -n %K8S_NAMESPACE%
+
+                    echo ===== DEPLOYMENT =====
+                    kubectl get deployment -n %K8S_NAMESPACE%
+
+                    echo ===== SERVICE =====
+                    kubectl get service -n %K8S_NAMESPACE%
+                '''
 
                 echo 'Verifying that two replicas are available...'
 
                 bat '''
-                    kubectl get deployment finacplus-api -o jsonpath="{.status.availableReplicas}" > replicas.txt
+                    kubectl get deployment finacplus-api ^
+                        -n %K8S_NAMESPACE% ^
+                        -o jsonpath="{.status.availableReplicas}" > replicas.txt
+
                     set /p AVAILABLE_REPLICAS=<replicas.txt
 
                     if not "%AVAILABLE_REPLICAS%"=="2" (
@@ -144,21 +202,15 @@ pipeline {
 
                     echo Two replicas are available.
                 '''
-
-                echo 'Verifying deployed image...'
-
-                bat '''
-                    kubectl get deployment finacplus-api -o jsonpath="{.spec.template.spec.containers[0].image}"
-                '''
             }
         }
 
         stage('Application Health Check') {
             steps {
-                echo 'Starting temporary port-forward...'
+                echo 'Starting temporary port-forward for health check...'
 
                 bat '''
-                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/health' -TimeoutSec 10; Write-Host ('Health response: ' + ($response | ConvertTo-Json -Compress)); if ($response.status -ne 'healthy') { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
+                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','-n','%K8S_NAMESPACE%','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/health' -TimeoutSec 10; Write-Host ('Health response: ' + ($response | ConvertTo-Json -Compress)); if ($response.status -ne 'healthy') { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
                 '''
             }
         }
@@ -168,7 +220,7 @@ pipeline {
                 echo 'Validating accounts API...'
 
                 bat '''
-                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/api/accounts' -TimeoutSec 10; Write-Host ('Accounts response: ' + ($response | ConvertTo-Json -Compress)); if ($response.Count -ne 3) { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
+                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','-n','%K8S_NAMESPACE%','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/api/accounts' -TimeoutSec 10; Write-Host ('Accounts response: ' + ($response | ConvertTo-Json -Compress)); if ($response.Count -ne 3) { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
                 '''
             }
         }
@@ -179,7 +231,6 @@ pipeline {
         success {
             echo '========================================'
             echo 'FinacPlus CI/CD Pipeline PASSED'
-            echo "Deployed image: ${env.IMAGE_NAME}"
             echo '========================================'
         }
 
@@ -193,9 +244,17 @@ pipeline {
         always {
             echo 'Final Kubernetes state:'
 
-            bat 'kubectl get pods 2>nul || exit /b 0'
-            bat 'kubectl get deployment 2>nul || exit /b 0'
-            bat 'kubectl get service 2>nul || exit /b 0'
+            bat '''
+                kubectl get pods -n %K8S_NAMESPACE% 2>nul || exit /b 0
+            '''
+
+            bat '''
+                kubectl get deployment -n %K8S_NAMESPACE% 2>nul || exit /b 0
+            '''
+
+            bat '''
+                kubectl get service -n %K8S_NAMESPACE% 2>nul || exit /b 0
+            '''
         }
     }
 }
