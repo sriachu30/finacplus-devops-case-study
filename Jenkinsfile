@@ -146,55 +146,26 @@ pipeline {
             }
         }
 
-        stage('Prepare Kubernetes Manifests') {
+ stage('Prepare Kind Cluster') {
     steps {
-        echo "Generating Kubernetes manifests for application: ${env.APP_NAME}..."
+        echo "Checking Kind cluster: ${env.KIND_CLUSTER}..."
 
-        powershell '''
-            $ErrorActionPreference = "Stop"
+        bat '''
+            kind get clusters
 
-            $appName = $env:APP_NAME
-            $imageName = $env:IMAGE_NAME
+            kind get clusters > kind-clusters.txt
 
-            if ($appName -notmatch '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') {
-                throw "Invalid APP_NAME '$appName'. Kubernetes names must use lowercase letters, numbers, and hyphens."
-            }
+            findstr /X /C:"%KIND_CLUSTER%" kind-clusters.txt >nul
 
-            Write-Host "Application name: $appName"
-            Write-Host "Image name: $imageName"
+            if errorlevel 1 (
+                echo Kind cluster "%KIND_CLUSTER%" not found.
+                echo Creating cluster...
+                kind create cluster --name %KIND_CLUSTER% --wait 5m
+            ) else (
+                echo Kind cluster "%KIND_CLUSTER%" already exists.
+            )
 
-            if (Test-Path "generated-k8s") {
-                Remove-Item "generated-k8s" -Recurse -Force
-            }
-
-            New-Item -ItemType Directory -Force -Path "generated-k8s" | Out-Null
-
-            $deployment = Get-Content "k8s/deployment.template.yaml" -Raw
-            $service = Get-Content "k8s/service.template.yaml" -Raw
-
-            $deployment = $deployment.Replace('${APP_NAME}', $appName)
-            $deployment = $deployment.Replace('${IMAGE_NAME}', $imageName)
-
-            $service = $service.Replace('${APP_NAME}', $appName)
-
-            Set-Content `
-                -Path "generated-k8s/deployment.yaml" `
-                -Value $deployment `
-                -Encoding UTF8
-
-            Set-Content `
-                -Path "generated-k8s/service.yaml" `
-                -Value $service `
-                -Encoding UTF8
-
-            Write-Host "===== GENERATED MANIFESTS ====="
-            Get-ChildItem "generated-k8s"
-
-            Write-Host "===== GENERATED DEPLOYMENT ====="
-            Get-Content "generated-k8s/deployment.yaml"
-
-            Write-Host "===== GENERATED SERVICE ====="
-            Get-Content "generated-k8s/service.yaml"
+            del kind-clusters.txt
         '''
     }
 }
