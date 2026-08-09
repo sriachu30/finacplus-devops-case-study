@@ -83,22 +83,33 @@ pipeline {
     steps {
         echo "Checking Kind cluster: ${env.KIND_CLUSTER}..."
 
-        bat '''
+        powershell '''
+            $ErrorActionPreference = "Stop"
+
+            $clusterName = $env:KIND_CLUSTER
+
+            Write-Host "Existing Kind clusters:"
             kind get clusters
 
-            kind get clusters > kind-clusters.txt
+            $clusters = @(kind get clusters)
 
-            findstr /X /C:"%KIND_CLUSTER%" kind-clusters.txt >nul
+            if ($clusters -contains $clusterName) {
+                Write-Host "Kind cluster '$clusterName' already exists."
+            }
+            else {
+                Write-Host "Kind cluster '$clusterName' not found."
+                Write-Host "Creating cluster..."
 
-            if errorlevel 1 (
-                echo Kind cluster "%KIND_CLUSTER%" not found.
-                echo Creating cluster...
-                kind create cluster --name %KIND_CLUSTER% --wait 5m
-            ) else (
-                echo Kind cluster "%KIND_CLUSTER%" already exists.
-            )
+                kind create cluster `
+                    --name $clusterName `
+                    --wait 5m
 
-            del kind-clusters.txt
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to create Kind cluster '$clusterName'."
+                }
+
+                Write-Host "Kind cluster '$clusterName' created successfully."
+            }
         '''
     }
 }
