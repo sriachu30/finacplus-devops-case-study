@@ -19,9 +19,13 @@ spec:
         app: ${APP_NAME}
 
     spec:
+      automountServiceAccountToken: false
+
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
 
       containers:
         - name: ${APP_NAME}
@@ -30,6 +34,8 @@ spec:
 
           securityContext:
             allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
