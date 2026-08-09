@@ -53,15 +53,21 @@ pipeline {
             }
         }
 
-        stage('Python Tests') {
-            steps {
-                echo 'Installing Python dependencies...'
-                bat 'python -m pip install -r requirements.txt'
+       stage('Python Tests') {
+    steps {
+        echo 'Installing Python dependencies...'
+        bat 'python -m pip install -r requirements.txt'
 
-                echo 'Running pytest...'
-                bat 'python -m pytest -v'
-            }
+        echo 'Running pytest...'
+        bat 'python -m pytest -v --junitxml=test-results.xml'
+    }
+
+    post {
+        always {
+            junit 'test-results.xml'
         }
+    }
+}
 
         stage('Docker Build') {
             steps {
@@ -298,6 +304,34 @@ pipeline {
                 '''
             }
         }
+
+        stage('Deployment Diagnostics') {
+    steps {
+        echo 'Collecting Kubernetes deployment diagnostics...'
+
+        bat '''
+            echo ================================
+            echo KUBERNETES PODS
+            echo ================================
+            kubectl get pods -n %K8S_NAMESPACE% -o wide
+
+            echo ================================
+            echo KUBERNETES DEPLOYMENT
+            echo ================================
+            kubectl get deployment %APP_NAME% -n %K8S_NAMESPACE%
+
+            echo ================================
+            echo KUBERNETES SERVICE
+            echo ================================
+            kubectl get service %APP_NAME% -n %K8S_NAMESPACE%
+
+            echo ================================
+            echo DEPLOYMENT DETAILS
+            echo ================================
+            kubectl describe deployment %APP_NAME% -n %K8S_NAMESPACE%
+        '''
+    }
+}
     }
 
     post {
@@ -309,18 +343,43 @@ pipeline {
         }
 
         failure {
-            echo '========================================'
-            echo 'FinacPlus CI/CD Pipeline FAILED'
-            echo 'Check the stage logs above.'
-            echo '========================================'
-        }
+    echo '========================================'
+    echo 'FinacPlus CI/CD Pipeline FAILED'
+    echo 'Collecting diagnostic information...'
+    echo '========================================'
 
+    bat '''
+        echo ================================
+        echo POD STATUS
+        echo ================================
+        kubectl get pods -n %K8S_NAMESPACE% -o wide
+
+        echo ================================
+        echo POD DESCRIPTIONS
+        echo ================================
+        kubectl describe pods -n %K8S_NAMESPACE%
+
+        echo ================================
+        echo APPLICATION LOGS
+        echo ================================
+        kubectl logs -n %K8S_NAMESPACE% -l app=%APP_NAME% --all-containers=true --tail=200
+    '''
+}
         always {
-            echo 'Final Kubernetes state:'
+    echo '========================================'
+    echo 'Final Kubernetes State'
+    echo '========================================'
 
-            bat 'kubectl get pods -n %K8S_NAMESPACE% 2>nul || exit /b 0'
-            bat 'kubectl get deployment -n %K8S_NAMESPACE% 2>nul || exit /b 0'
-            bat 'kubectl get service -n %K8S_NAMESPACE% 2>nul || exit /b 0'
-        }
+    bat '''
+        echo ===== PODS =====
+        kubectl get pods -n %K8S_NAMESPACE% -o wide 2>nul || exit /b 0
+
+        echo ===== DEPLOYMENT =====
+        kubectl get deployment %APP_NAME% -n %K8S_NAMESPACE% 2>nul || exit /b 0
+
+        echo ===== SERVICE =====
+        kubectl get service %APP_NAME% -n %K8S_NAMESPACE% 2>nul || exit /b 0
+    '''
+}
     }
 }
