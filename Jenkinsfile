@@ -6,6 +6,7 @@ pipeline {
         KIND_CLUSTER = 'finacplus'
         K8S_CONTEXT = 'kind-finacplus'
         HEALTH_PORT = '18000'
+        KUBECONFIG = "${WORKSPACE}\\.kubeconfig"
     }
 
     stages {
@@ -44,18 +45,36 @@ pipeline {
         stage('Prepare Kind Cluster') {
             steps {
                 echo 'Checking Kind cluster...'
-                bat '''
-                kind get clusters
-                docker ps --filter "name=finacplus-control-plane"
 
-                kind get clusters | findstr "finacplus" >nul
-                if errorlevel 1 (
-                   echo Kind cluster not found. Creating cluster...
-                   kind create cluster --name finacplus --wait 5m
-                ) else (
-                   echo Kind cluster already exists.
-                )
-             '''
+                bat '''
+                    kind get clusters
+                    docker ps --filter "name=finacplus-control-plane"
+
+                    kind get clusters | findstr "finacplus" >nul
+
+                    if errorlevel 1 (
+                        echo Kind cluster not found. Creating cluster...
+                        kind create cluster --name %KIND_CLUSTER% --wait 5m
+                    ) else (
+                        echo Kind cluster already exists.
+                    )
+                '''
+            }
+        }
+
+        stage('Configure Kubernetes Access') {
+            steps {
+                echo 'Configuring Kubernetes access for Jenkins...'
+
+                bat '''
+                    kind export kubeconfig --name %KIND_CLUSTER% --kubeconfig "%KUBECONFIG%"
+
+                    echo ===== KUBERNETES CONTEXT =====
+                    kubectl config current-context
+
+                    echo ===== KUBERNETES NODES =====
+                    kubectl get nodes
+                '''
             }
         }
 
@@ -85,13 +104,17 @@ pipeline {
                 bat 'kubectl get service'
 
                 echo 'Verifying that two replicas are available...'
+
                 bat '''
                     kubectl get deployment finacplus-api -o jsonpath="{.status.availableReplicas}" > replicas.txt
+
                     set /p AVAILABLE_REPLICAS=<replicas.txt
+
                     if not "%AVAILABLE_REPLICAS%"=="2" (
                         echo Expected 2 available replicas but found %AVAILABLE_REPLICAS%
                         exit /b 1
                     )
+
                     echo Two replicas are available.
                 '''
             }
@@ -137,6 +160,7 @@ pipeline {
     }
 
     post {
+
         success {
             echo '========================================'
             echo 'FinacPlus CI/CD Pipeline PASSED'
@@ -152,6 +176,7 @@ pipeline {
 
         always {
             echo 'Final Kubernetes state:'
+
             bat 'kubectl get pods 2>nul || exit /b 0'
             bat 'kubectl get deployment 2>nul || exit /b 0'
             bat 'kubectl get service 2>nul || exit /b 0'
