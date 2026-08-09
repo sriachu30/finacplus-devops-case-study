@@ -6,7 +6,9 @@ Demonstrate an end-to-end DevOps workflow for FinacPlus using Git, Jenkins, Dock
 
 ## Current Status
 
-Phase 1 complete: sample FinacPlus API implemented with tests. Containerization, CI/CD pipeline, and deployment configurations are not yet implemented.
+- Phase 1 complete: sample FinacPlus API implemented with automated tests.
+- Phase 2 complete: API containerized with Docker and validated locally.
+- Jenkins CI/CD pipeline and Kubernetes deployment are planned for the next phases.
 
 ## Application
 
@@ -14,11 +16,11 @@ The **FinacPlus API** is a small mock financial REST service. It provides static
 
 ### Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Returns service health status |
-| GET | `/api/accounts` | Returns a list of mock financial accounts |
-| GET | `/api/accounts/{account_id}` | Returns a single account by ID, or HTTP 404 if not found |
+| Method | Path                         | Description                                              |
+| ------ | ---------------------------- | -------------------------------------------------------- |
+| GET    | `/health`                    | Returns service health status                            |
+| GET    | `/api/accounts`              | Returns a list of mock financial accounts                |
+| GET    | `/api/accounts/{account_id}` | Returns a single account by ID, or HTTP 404 if not found |
 
 ### Install dependencies
 
@@ -54,9 +56,63 @@ curl http://127.0.0.1:8000/health
 pytest
 ```
 
+## Docker
+
+The application is containerized as a reproducible deployment artifact using Docker.
+
+### Build the Docker image
+
+```bash
+docker build -t finacplus-api:local .
+```
+
+### Run the container
+
+```bash
+docker run --name finacplus-api-local -p 8000:8000 finacplus-api:local
+```
+
+The API is then available at:
+
+```text
+http://localhost:8000
+```
+
+### Validate the container
+
+Health endpoint:
+
+```text
+http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"healthy"}
+```
+
+FastAPI documentation:
+
+```text
+http://localhost:8000/docs
+```
+
+The container is configured to run the application as a non-root user (`appuser`) for improved container security.
+
+### Docker image
+
+The locally built image is:
+
+```text
+finacplus-api:local
+```
+
+The image is intended to become the deployable artifact consumed by the future CI/CD pipeline.
+
 ## Planned High-Level Architecture
 
-```
+```text
 Git
   |
   v
@@ -66,7 +122,7 @@ Jenkins
 Build / Test
   |
   v
-Container Image
+Docker Image
   |
   v
 Kubernetes
