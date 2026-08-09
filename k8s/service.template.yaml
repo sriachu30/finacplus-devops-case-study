@@ -1,11 +1,15 @@
 apiVersion: v1
 kind: Service
+
 metadata:
-  name: finacplus-api
+  name: ${APP_NAME}
+
 spec:
   selector:
-    app: finacplus-api
+    app: ${APP_NAME}
+
   type: NodePort
+
   ports:
     - protocol: TCP
       port: 8000

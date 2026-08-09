@@ -2,21 +2,21 @@ apiVersion: apps/v1
 kind: Deployment
 
 metadata:
-  name: finacplus-api
+  name: ${APP_NAME}
   labels:
-    app: finacplus-api
+    app: ${APP_NAME}
 
 spec:
   replicas: 2
 
   selector:
     matchLabels:
-      app: finacplus-api
+      app: ${APP_NAME}
 
   template:
     metadata:
       labels:
-        app: finacplus-api
+        app: ${APP_NAME}
 
     spec:
       securityContext:
@@ -24,8 +24,8 @@ spec:
         runAsUser: 1000
 
       containers:
-        - name: finacplus-api
-          image: finacplus-api:local
+        - name: ${APP_NAME}
+          image: ${IMAGE_NAME}
           imagePullPolicy: Never
 
           securityContext:

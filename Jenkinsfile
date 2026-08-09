@@ -13,6 +13,12 @@ pipeline {
         )
 
         string(
+            name: 'APP_NAME',
+            defaultValue: 'finacplus-api',
+            description: 'Kubernetes application/deployment name'
+        )
+
+        string(
             name: 'KIND_CLUSTER',
             defaultValue: 'finacplus',
             description: 'Target Kubernetes/Kind cluster'
@@ -27,11 +33,11 @@ pipeline {
 
     environment {
         IMAGE_REPOSITORY = "${params.IMAGE_REPOSITORY}"
+        APP_NAME = "${params.APP_NAME}"
         KIND_CLUSTER = "${params.KIND_CLUSTER}"
         K8S_NAMESPACE = "${params.K8S_NAMESPACE}"
 
         K8S_CONTEXT = "kind-${params.KIND_CLUSTER}"
-
         IMAGE_NAME = "${params.IMAGE_REPOSITORY}:local"
 
         HEALTH_PORT = '18000'
@@ -67,7 +73,7 @@ pipeline {
 
         stage('Verify Docker Image') {
             steps {
-                echo 'Verifying Docker image...'
+                echo "Verifying Docker image: ${env.IMAGE_NAME}"
 
                 bat 'docker image inspect %IMAGE_NAME%'
             }
@@ -78,21 +84,16 @@ pipeline {
                 echo "Checking Kind cluster: ${env.KIND_CLUSTER}..."
 
                 bat '''
-                    echo ===== KIND CLUSTERS =====
                     kind get clusters
 
-                    echo ===== KIND CONTROL PLANE =====
                     docker ps --filter "name=%KIND_CLUSTER%-control-plane"
 
-                    kind get clusters | findstr /C:"%KIND_CLUSTER%" >nul
+                    kind get clusters | findstr /X /C:"%KIND_CLUSTER%" >nul
 
                     if errorlevel 1 (
                         echo Kind cluster "%KIND_CLUSTER%" not found.
                         echo Creating cluster...
-
-                        kind create cluster ^
-                            --name %KIND_CLUSTER% ^
-                            --wait 5m
+                        kind create cluster --name %KIND_CLUSTER% --wait 5m
                     ) else (
                         echo Kind cluster "%KIND_CLUSTER%" already exists.
                     )
@@ -101,25 +102,27 @@ pipeline {
         }
 
         stage('Configure Kubernetes Access') {
-    steps {
-        echo "Configuring Kubernetes access for cluster: ${env.KIND_CLUSTER}..."
+            steps {
+                echo "Configuring Kubernetes access for cluster: ${env.KIND_CLUSTER}..."
 
-        bat '''
-            kind export kubeconfig ^
-                --name %KIND_CLUSTER% ^
-                --kubeconfig "%KUBECONFIG%"
+                bat '''
+                    kind export kubeconfig ^
+                        --name %KIND_CLUSTER% ^
+                        --kubeconfig "%KUBECONFIG%"
 
-            echo ===== KUBERNETES CONTEXT =====
+                    echo ===== KUBERNETES CONTEXT =====
+                    kubectl config current-context
 
-            kubectl config current-context
+                    powershell -NoProfile -Command "$actual = (kubectl config current-context).Trim(); $expected = '%K8S_CONTEXT%'.Trim(); if ($actual -ne $expected) { Write-Host 'ERROR: Kubernetes context does not match target cluster.'; Write-Host ('Expected: ' + $expected); Write-Host ('Actual: ' + $actual); exit 1 } else { Write-Host ('Kubernetes context verified: ' + $actual) }"
 
-            powershell -NoProfile -Command "$actual = (kubectl config current-context).Trim(); $expected = '%K8S_CONTEXT%'.Trim(); if ($actual -ne $expected) { Write-Host 'ERROR: Kubernetes context does not match target cluster.'; Write-Host ('Expected: ' + $expected); Write-Host ('Actual: ' + $actual); exit 1 } else { Write-Host ('Kubernetes context verified: ' + $actual) }"
+                    echo ===== KUBERNETES NODES =====
+                    kubectl get nodes
 
-            echo ===== KUBERNETES NODES =====
-            kubectl get nodes
-        '''
-    }
-}
+                    echo Kubernetes context verified: %K8S_CONTEXT%
+                '''
+            }
+        }
+
         stage('Prepare Kubernetes Namespace') {
             steps {
                 echo "Preparing Kubernetes namespace: ${env.K8S_NAMESPACE}..."
@@ -143,30 +146,93 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Prepare Kubernetes Manifests') {
             steps {
-                echo "Deploying to cluster ${env.KIND_CLUSTER}, namespace ${env.K8S_NAMESPACE}..."
+                echo "Generating Kubernetes manifests for application: ${env.APP_NAME}..."
 
-                echo 'Applying Kubernetes manifests...'
+                powershell -NoProfile '''
+                    $ErrorActionPreference = "Stop"
+
+                    $appName = $env:APP_NAME
+                    $imageName = $env:IMAGE_NAME
+
+                    if ($appName -notmatch '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$') {
+                        throw "Invalid APP_NAME '$appName'. Kubernetes names must use lowercase letters, numbers, and hyphens."
+                    }
+
+                    Write-Host "Application name: $appName"
+                    Write-Host "Image name: $imageName"
+
+                    if (Test-Path "generated-k8s") {
+                        Remove-Item "generated-k8s" -Recurse -Force
+                    }
+
+                    New-Item -ItemType Directory -Force -Path "generated-k8s" | Out-Null
+
+                    $deployment = Get-Content "k8s/deployment.template.yaml" -Raw
+                    $service = Get-Content "k8s/service.template.yaml" -Raw
+
+                    $deployment = $deployment.Replace('${APP_NAME}', $appName)
+                    $deployment = $deployment.Replace('${IMAGE_NAME}', $imageName)
+
+                    $service = $service.Replace('${APP_NAME}', $appName)
+
+                    Set-Content `
+                        -Path "generated-k8s/deployment.yaml" `
+                        -Value $deployment `
+                        -Encoding UTF8
+
+                    Set-Content `
+                        -Path "generated-k8s/service.yaml" `
+                        -Value $service `
+                        -Encoding UTF8
+
+                    Write-Host "===== GENERATED MANIFESTS ====="
+                    Get-ChildItem "generated-k8s"
+
+                    Write-Host "===== GENERATED DEPLOYMENT ====="
+                    Get-Content "generated-k8s/deployment.yaml"
+
+                    Write-Host "===== GENERATED SERVICE ====="
+                    Get-Content "generated-k8s/service.yaml"
+                '''
+            }
+        }
+
+        stage('Validate Kubernetes Manifests') {
+            steps {
+                echo 'Validating generated Kubernetes manifests...'
 
                 bat '''
                     kubectl apply ^
-                        -f k8s/ ^
+                        --dry-run=client ^
+                        -f generated-k8s/ ^
+                        -n %K8S_NAMESPACE%
+                '''
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                echo "Deploying ${env.APP_NAME} to cluster ${env.KIND_CLUSTER}, namespace ${env.K8S_NAMESPACE}..."
+
+                bat '''
+                    kubectl apply ^
+                        -f generated-k8s/ ^
                         -n %K8S_NAMESPACE%
                 '''
 
-                echo "Updating deployment image to ${env.IMAGE_NAME}..."
+                echo 'Restarting deployment to ensure the newly built image is used...'
 
                 bat '''
-                    kubectl set image deployment/finacplus-api ^
-                        finacplus-api=%IMAGE_NAME% ^
+                    kubectl rollout restart deployment/%APP_NAME% ^
                         -n %K8S_NAMESPACE%
                 '''
 
                 echo 'Waiting for deployment rollout...'
 
                 bat '''
-                    kubectl rollout status deployment/finacplus-api ^
+                    kubectl rollout status deployment/%APP_NAME% ^
                         -n %K8S_NAMESPACE% ^
                         --timeout=120s
                 '''
@@ -177,21 +243,14 @@ pipeline {
             steps {
                 echo 'Checking Kubernetes resources...'
 
-                bat '''
-                    echo ===== PODS =====
-                    kubectl get pods -n %K8S_NAMESPACE%
-
-                    echo ===== DEPLOYMENT =====
-                    kubectl get deployment -n %K8S_NAMESPACE%
-
-                    echo ===== SERVICE =====
-                    kubectl get service -n %K8S_NAMESPACE%
-                '''
+                bat 'kubectl get pods -n %K8S_NAMESPACE%'
+                bat 'kubectl get deployment -n %K8S_NAMESPACE%'
+                bat 'kubectl get service -n %K8S_NAMESPACE%'
 
                 echo 'Verifying that two replicas are available...'
 
                 bat '''
-                    kubectl get deployment finacplus-api ^
+                    kubectl get deployment %APP_NAME% ^
                         -n %K8S_NAMESPACE% ^
                         -o jsonpath="{.status.availableReplicas}" > replicas.txt
 
@@ -212,7 +271,7 @@ pipeline {
                 echo 'Starting temporary port-forward for health check...'
 
                 bat '''
-                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','-n','%K8S_NAMESPACE%','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/health' -TimeoutSec 10; Write-Host ('Health response: ' + ($response | ConvertTo-Json -Compress)); if ($response.status -ne 'healthy') { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
+                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','-n','%K8S_NAMESPACE%','service/%APP_NAME%','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/health' -TimeoutSec 10; Write-Host ('Health response: ' + ($response | ConvertTo-Json -Compress)); if ($response.status -ne 'healthy') { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
                 '''
             }
         }
@@ -222,7 +281,7 @@ pipeline {
                 echo 'Validating accounts API...'
 
                 bat '''
-                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','-n','%K8S_NAMESPACE%','service/finacplus-api','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/api/accounts' -TimeoutSec 10; Write-Host ('Accounts response: ' + ($response | ConvertTo-Json -Compress)); if ($response.Count -ne 3) { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
+                    powershell -NoProfile -Command "$p = Start-Process kubectl -ArgumentList 'port-forward','-n','%K8S_NAMESPACE%','service/%APP_NAME%','%HEALTH_PORT%:8000' -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 5; try { $response = Invoke-RestMethod -Uri 'http://127.0.0.1:%HEALTH_PORT%/api/accounts' -TimeoutSec 10; Write-Host ('Accounts response: ' + ($response | ConvertTo-Json -Compress)); if ($response.Count -ne 3) { exit 1 } } finally { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }"
                 '''
             }
         }
@@ -246,17 +305,9 @@ pipeline {
         always {
             echo 'Final Kubernetes state:'
 
-            bat '''
-                kubectl get pods -n %K8S_NAMESPACE% 2>nul || exit /b 0
-            '''
-
-            bat '''
-                kubectl get deployment -n %K8S_NAMESPACE% 2>nul || exit /b 0
-            '''
-
-            bat '''
-                kubectl get service -n %K8S_NAMESPACE% 2>nul || exit /b 0
-            '''
+            bat 'kubectl get pods -n %K8S_NAMESPACE% 2>nul || exit /b 0'
+            bat 'kubectl get deployment -n %K8S_NAMESPACE% 2>nul || exit /b 0'
+            bat 'kubectl get service -n %K8S_NAMESPACE% 2>nul || exit /b 0'
         }
     }
 }
